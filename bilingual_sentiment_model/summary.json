@@ -1,0 +1,22 @@
+{
+  "ar": {
+    "train_size": 115745,
+    "val_size": 12861,
+    "best_val_acc": 0.9146255850791931,
+    "classes": [
+      "negative",
+      "neutral",
+      "positive"
+    ]
+  },
+  "en": {
+    "train_size": 24732,
+    "val_size": 2748,
+    "best_val_acc": 0.726710319519043,
+    "classes": [
+      "negative",
+      "neutral",
+      "positive"
+    ]
+  }
+}
