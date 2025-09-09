@@ -1,7 +1,13 @@
+pip==24.2
+setuptools>=68
+wheel>=0.43
+
 streamlit==1.38.0
-tensorflow==2.20.0
+
+tensorflow==2.16.1
 numpy==1.26.4
-pandas>=2.2.2
+pandas==2.2.2
+
 pypdf>=4.2.0
 python-docx>=1.1.0
-protobuf>=5.28.0
+protobuf>=4.25.3
