@@ -19,6 +19,16 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 from pypdf import PdfReader               # PDF
 from docx import Document                 # DOCX
 
+import gdown, os, tensorflow as tf
+from pathlib import Path
+
+model_path = Path("bilingual_sentiment_model/en/en_best.keras")
+if not model_path.exists():
+    url = "https://drive.google.com/drive/folders/1MmFliWs-FqNLUj511U79GZ6oebmopKbH?usp=share_link"
+    gdown.download(url, str(model_path), quiet=False)
+
+model_en = tf.keras.models.load_model(model_path)
+
 # ------------------------
 # Page & Globals
 # ------------------------
