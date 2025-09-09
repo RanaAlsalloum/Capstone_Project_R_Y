@@ -1,0 +1,10 @@
+{
+  "train_size": 24732,
+  "val_size": 2748,
+  "best_val_acc": 0.726710319519043,
+  "classes": [
+    "negative",
+    "neutral",
+    "positive"
+  ]
+}
