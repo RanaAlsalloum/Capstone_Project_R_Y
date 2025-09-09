@@ -4,7 +4,7 @@ wheel>=0.43
 
 streamlit==1.38.0
 
-tensorflow==2.16.1
+tensorflow==2.20.0
 numpy==1.26.4
 pandas==2.2.2
 
