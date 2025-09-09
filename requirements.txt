@@ -1,18 +1,16 @@
-pip==24.2
-setuptools>=68
-wheel>=0.43
-
+# core
 streamlit==1.38.0
 
-# TF CPU فقط
-tensorflow==2.16.1
-tensorflow-io-gcs-filesystem==0.37.1
-keras==3.2.1
+# TensorFlow (CPU build فقط)
+tensorflow-cpu==2.16.1
 
+# scientific stack (إصدارات متوافقة مع TF 2.16)
 numpy==1.26.4
 pandas==2.2.2
+protobuf==4.25.3
 h5py==3.11.0
-protobuf>=4.25.3,<5
+ml-dtypes==0.4.0
 
-pypdf>=4.2.0
-python-docx>=1.1.0
+# file readers
+pypdf==4.2.0
+python-docx==1.1.0
