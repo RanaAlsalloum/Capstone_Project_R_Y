@@ -1,8 +1,9 @@
 # app.py — Bilingual (Arabic + English) Sentiment Analysis
 # --------------------------------------------------------
-# يدعم: نص واحد، CSV، PDF، DOCX + إدارة الموديلات + فحص البيئة
+# يدعم: نص واحد، CSV، PDF، DOCX + فحص البيئة
+# مضاف: قواعد عربية لفك الحياد (نفي/تعجب/مكثّفات/إيموجي)
 
-import os, sys, re, io, zipfile, json
+import os, sys, re, json
 from pathlib import Path
 from typing import Dict, Any, Tuple, List
 
@@ -10,7 +11,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-# PDF & DOCX readers
+# ---- PDF & DOCX readers (اختياري) ----
 try:
     from pypdf import PdfReader
 except Exception:
@@ -74,37 +75,91 @@ def preprocess_text(txt: str, lang: str) -> str:
     return ar_normalize(txt) if lang == "ar" else txt
 
 # ------------------------
-# Arabic keyword override
+# Arabic rules/keywords to break neutrality
 # ------------------------
 AR_NEG = {
-    "حزين","زعلان","تعيس","سيئ","سيء","مكتئب","محبط","تعبان","كاره",
-    "مزعج","رديء","سئ","كارثي","مقرف","فظيع","سيئة","زفت","غثيث",
-    "مؤسف","مخيّب","أسوأ","ممل"
+    "حزين","زعلان","تعيس","سيئ","سيء","سئ","مكتئب","محبط","تعبان","كاره",
+    "مزعج","رديء","سيئة","كارثي","مقرف","فظيع","زفت","مخيّب","أسوأ","ممل",
+    "كارثة","رداءة","غبن","قرف","ندمت","تافه","سيئين"
 }
 AR_POS = {
     "سعيد","مبسوط","فرحان","ممتاز","رائع","جميل","حلو","احب","أحب",
     "عجبني","مذهل","مسعد","هايل","كويس","ممتازه","تحفه","خيالي",
-    "يفوز","حبيت","أفضل","مرضي","مبهر"
+    "يفوز","حبيت","أفضل","مرضي","مبهر","روعة","يجنن","رهيب","مره حلو","فخم"
 }
+AR_NEGATIONS = {"مو","مش","ليس","ما","مو مره","مهو","مهوب","ولا"}
+AR_INTENSIFIERS = {"جداً","جدًا","مره","مرة","بشكل كبير","مرة كثير","قوي"}
+EMOJI_POS = {"😊","😍","🤩","😁","👍","💖","✨","👏","🥰"}
+EMOJI_NEG = {"😞","😡","🤬","😢","👎","💔","😠","😭"}
 
-def override_ar_prediction(text: str, label: str, probs: np.ndarray, classes: List[str], margin: float = 0.15) -> str:
-    if "neutral" not in classes:
-        return label
+EXCLAMATION_BOOST = 0.06   # تعزيز بسيط لو في ! كثيرة
+INTENSIFIER_BOOST = 0.07   # تعزيز لو في جداً/مره
+RULE_CONF = 0.55           # ثقة افتراضية لو قلبنا بالقاعدة
+LOW_CONF = 0.60            # لو أعلى احتمال أقل من هذا نسمح للقاعدة تقلب
+NEU_MARGIN = 0.18          # سماحية لفك الحياد
+
+def _rule_score_ar(text: str) -> str | None:
+    """قواعد سريعة: تُرجِع 'positive' أو 'negative' أو None."""
+    t = ar_normalize(text)
+    has_pos = any(w in t for w in AR_POS) or any(e in text for e in EMOJI_POS)
+    has_neg = any(w in t for w in AR_NEG) or any(e in text for e in EMOJI_NEG)
+
+    # نفي بسيط: "مو حلو" = سلبي ، "مو سيء" = إيجابي تقريباً
+    negation = any(n in t for n in AR_NEGATIONS)
+    if negation:
+        if has_pos and not has_neg:
+            has_pos, has_neg = False, True
+        elif has_neg and not has_pos:
+            has_pos, has_neg = True, False
+
+    if has_pos and not has_neg:
+        return "positive"
+    if has_neg and not has_pos:
+        return "negative"
+    return None
+
+def override_ar_prediction(
+    text: str,
+    label: str,
+    probs: np.ndarray,
+    classes: List[str],
+    margin: float = NEU_MARGIN
+) -> tuple[str, float]:
+    """يُرجع (label, confidence) بعد القواعد والتحسينات العربية."""
     try:
-        i_neu = classes.index("neutral")
         i_neg = classes.index("negative")
+        i_neu = classes.index("neutral")
         i_pos = classes.index("positive")
     except ValueError:
-        return label
-    t = str(text)
-    has_neg = any(w in t for w in AR_NEG)
-    has_pos = any(w in t for w in AR_POS)
+        return label, float(np.max(probs))
+
+    p_neg, p_neu, p_pos = float(probs[i_neg]), float(probs[i_neu]), float(probs[i_pos])
+
+    # لو محايد وبالقرب من أحد الطرفين، نفك الحياد
     if label == "neutral":
-        if has_neg and (probs[i_neu] - probs[i_neg] <= margin):
-            return "negative"
-        if has_pos and (probs[i_neu] - probs[i_pos] <= margin):
-            return "positive"
-    return label
+        if p_neu - p_neg <= margin:
+            label = "negative"
+        if p_neu - p_pos <= margin:
+            label = "positive"
+
+    # قواعد لغوية/إيموجي إذا الثقة ضعيفة أو ما زال محايد
+    top_p = max(p_neg, p_neu, p_pos)
+    rule = _rule_score_ar(text)
+    if rule and (label == "neutral" or top_p < LOW_CONF):
+        label = rule
+        top_p = max(top_p, RULE_CONF)
+
+    # تعزيز حسب علامات التعجب والمكثِّفات
+    boost = 0.0
+    excl = text.count("!")
+    if excl >= 2: boost += EXCLAMATION_BOOST
+    if any(w in text for w in AR_INTENSIFIERS): boost += INTENSIFIER_BOOST
+    if label == "positive" and boost > 0:
+        top_p = min(0.99, top_p + boost)
+    if label == "negative" and boost > 0 and excl >= 3:
+        top_p = min(0.99, top_p + boost/2)
+
+    return label, top_p
 
 # ------------------------
 # Loaders
@@ -178,14 +233,18 @@ def _predict_batch(texts: List[str], model_root: Path) -> pd.DataFrame:
         pred_idx = np.argmax(probs, axis=1)
 
         for j, i_global in enumerate(idxs):
-            label = classes[int(pred_idx[j])] if int(pred_idx[j]) < len(classes) else str(int(pred_idx[j]))
+            base_label = classes[int(pred_idx[j])] if int(pred_idx[j]) < len(classes) else str(int(pred_idx[j]))
+            conf = float(probs[j, pred_idx[j]])
+            label = base_label
+
             if lang == "ar":
-                label = override_ar_prediction(texts[i_global], label, probs[j], classes)
+                label, conf = override_ar_prediction(texts[i_global], base_label, probs[j], classes)
+
             row = {
                 "text": texts[i_global],
                 "lang": lang,
                 "label": label,
-                "confidence": float(probs[j, pred_idx[j]]),
+                "confidence": float(conf),
             }
             for ci, cname in enumerate(classes):
                 row[f"p_{cname}"] = float(probs[j, ci])
@@ -239,7 +298,6 @@ st.title("💬 Sentiment Analysis | تحليل المشاعر (AR/EN)")
 tabs = st.tabs([
     "📝 Single Text | نص واحد",
     "📎 File (CSV / PDF / DOCX) | ملف",
-    "🧩 Model Manager | إدارة النماذج",
     "🩺 Environment | البيئة"
 ])
 
@@ -259,12 +317,15 @@ with tabs[0]:
                     df = _predict_batch([t], model_root)
                     row = df.iloc[0]
                     lang_badge = "🇸🇦 عربي" if row["lang"] == "ar" else "🇬🇧 English"
-                    st.success(f"**Language:** {lang_badge}\n\n**Prediction:** {row['label']}  |  **Confidence:** {row['confidence']:.3f}")
+                    st.success(f"**Language:** {lang_badge}\n\n**Prediction:** `{row['label']}`  |  **Confidence:** `{row['confidence']:.3f}`")
                     prob_cols = [c for c in df.columns if c.startswith("p_")]
                     if prob_cols:
+                        st.markdown("**Probabilities:**")
                         st.dataframe(df[prob_cols].T.rename(columns={0: "probability"}))
                 except Exception as e:
-                    st.error(e)
+                    st.error(str(e))
+            else:
+                st.warning("اكتب نصًا أولاً.")
 
 # ------------------------
 # Tab 2 - File upload
@@ -277,36 +338,41 @@ with tabs[1]:
         up = st.file_uploader("Upload CSV / PDF / DOCX", type=["csv","pdf","docx"])
         if st.button("Run") and up:
             try:
-                if up.name.endswith(".csv"):
-                    df = read_csv(up)
-                    if "text" not in df.columns:
-                        df = df.rename(columns={df.columns[0]: "text"})
-                    texts = df["text"].astype(str).tolist()
-                elif up.name.endswith(".pdf"):
+                if up.name.lower().endswith(".csv"):
+                    df_in = read_csv(up)
+                    if "text" not in df_in.columns:
+                        df_in = df_in.rename(columns={df_in.columns[0]: "text"})
+                    texts = df_in["text"].astype(str).tolist()
+                elif up.name.lower().endswith(".pdf"):
                     texts = read_pdf(up)
                 else:
                     texts = read_docx(up)
 
                 out_df = _predict_batch(texts, model_root)
-                st.dataframe(out_df)
-                st.download_button("Download CSV", data=out_df.to_csv(index=False), file_name="predictions.csv")
+                st.dataframe(out_df, use_container_width=True)
+                st.download_button("Download CSV", data=out_df.to_csv(index=False).encode("utf-8"),
+                                   file_name="predictions.csv", mime="text/csv")
             except Exception as e:
-                st.error(e)
+                st.error(str(e))
 
 # ------------------------
-# Tab 3 - Model Manager
+# Tab 3 - Environment
 # ------------------------
 with tabs[2]:
-    st.info("ارفع ملفات الموديل (.keras/.h5) + tokenizer.json + label_map.json لكل لغة (ar/en).")
-
-# ------------------------
-# Tab 4 - Environment
-# ------------------------
-with tabs[3]:
     st.write("**Python:**", sys.version)
     ok_tf, err_tf = ensure_tf()
     st.write("**TensorFlow imported?**", ok_tf)
     if ok_tf:
         st.write("TF version:", tf.__version__)
+        st.write("Num GPUs:", len(tf.config.list_physical_devices('GPU')))
     else:
         st.error(err_tf)
+    st.write("**Model root exists?**", DEFAULT_MODEL_DIR.exists(), str(DEFAULT_MODEL_DIR.resolve()))
+    for lang in ("ar","en"):
+        d = DEFAULT_MODEL_DIR / lang
+        st.write(f"**{lang} folder exists?**", d.exists(), str(d))
+        if d.exists():
+            try:
+                st.code("\n".join([p.name for p in sorted(d.iterdir())]), language="bash")
+            except:
+                pass
