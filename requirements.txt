@@ -4,10 +4,15 @@ wheel>=0.43
 
 streamlit==1.38.0
 
+# TF CPU فقط
 tensorflow==2.16.1
+tensorflow-io-gcs-filesystem==0.37.1
+keras==3.2.1
+
 numpy==1.26.4
 pandas==2.2.2
+h5py==3.11.0
+protobuf>=4.25.3,<5
 
 pypdf>=4.2.0
 python-docx>=1.1.0
-protobuf>=4.25.3
