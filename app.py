@@ -9,28 +9,25 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-# ملفات PDF / DOCX
+# -------- Optional readers --------
 try:
-    from pypdf import PdfReader          # pip install pypdf
-except Exception as _e_pdf:
+    from pypdf import PdfReader
+except Exception:
     PdfReader = None
-    PDF_IMPORT_ERROR = _e_pdf
 
 try:
-    from docx import Document            # pip install python-docx
-except Exception as _e_docx:
+    from docx import Document
+except Exception:
     Document = None
-    DOCX_IMPORT_ERROR = _e_docx
 
-# ====== استيراد TensorFlow بشكل كسول ======
-TF_IMPORT_ERROR = None
+# ===== Lazy-import TensorFlow (لتسريع تشغيل الصفحة) =====
 tf = None
 tokenizer_from_json = None
 pad_sequences = None
+TF_ERR = None
 
 def ensure_tf():
-    """Import TF only when needed. Return (ok: bool, err_msg: str|None)."""
-    global tf, tokenizer_from_json, pad_sequences, TF_IMPORT_ERROR
+    global tf, tokenizer_from_json, pad_sequences, TF_ERR
     if tf is not None:
         return True, None
     try:
@@ -42,7 +39,7 @@ def ensure_tf():
         pad_sequences = _pad
         return True, None
     except Exception as e:
-        TF_IMPORT_ERROR = e
+        TF_ERR = e
         return False, str(e)
 
 # ------------------------
@@ -75,26 +72,23 @@ def preprocess_text(txt: str, lang: str) -> str:
     return ar_normalize(txt) if lang == "ar" else txt
 
 # ------------------------
-# Arabic keyword override
+# Arabic keyword override (لتحسين العربي إذا أعطى Neutral)
 # ------------------------
 AR_NEG = {
     "حزين","زعلان","تعيس","سيئ","سيء","مكتئب","محبط","تعبان","كاره","مزعج","رديء","سئ",
-    "كارثي","مقرف","فظيع","سيئة","زفت","غثيث","مؤسف","مخيّب","أسوأ","أبداً ما عجبني","ممل"
+    "كارثي","مقرف","فظيع","سيئة","زفت","غثيث","مؤسف","مخيب","أسوأ","ما عجبني","ممل","سيئين","سيئه"
 }
 AR_POS = {
     "سعيد","مبسوط","فرحان","ممتاز","رائع","جميل","حلو","احب","أحب","عجبني","مذهل",
-    "مسعد","هايل","كويس","ممتازه","تحفه","خيالي","يفوز","حبيت","أفضل","مرضي","مبهر"
+    "مسعد","هايل","كويس","ممتازه","تحفه","خيالي","يفوز","حبيت","أفضل","مرضي","مبهر","يجنن"
 }
 
 def override_ar_prediction(text: str, label: str, probs: np.ndarray, classes: List[str], margin: float = 0.15) -> str:
-    if "neutral" not in classes:
+    if not {"neutral","negative","positive"}.issubset(set(classes)):
         return label
-    try:
-        i_neu = classes.index("neutral")
-        i_neg = classes.index("negative")
-        i_pos = classes.index("positive")
-    except ValueError:
-        return label
+    i_neu = classes.index("neutral")
+    i_neg = classes.index("negative")
+    i_pos = classes.index("positive")
     t = str(text)
     has_neg = any(w in t for w in AR_NEG)
     has_pos = any(w in t for w in AR_POS)
@@ -106,7 +100,7 @@ def override_ar_prediction(text: str, label: str, probs: np.ndarray, classes: Li
     return label
 
 # ------------------------
-# Loaders (تعتمد على TF، فنضمن توفره أولاً)
+# Loaders
 # ------------------------
 @st.cache_resource(show_spinner=False)
 def load_lang_assets(model_root: Path, lang: str):
@@ -118,12 +112,14 @@ def load_lang_assets(model_root: Path, lang: str):
     if not lang_dir.exists():
         raise FileNotFoundError(f"Language folder not found: {lang_dir}")
 
+    # tokenizer
     tok_path = lang_dir / "tokenizer.json"
     if not tok_path.exists():
         raise FileNotFoundError(f"Missing tokenizer.json in {lang_dir}")
     with open(tok_path, "r", encoding="utf-8") as f:
         tok = tokenizer_from_json(f.read())
 
+    # labels
     label_map_path = lang_dir / "label_map.json"
     if label_map_path.exists():
         try:
@@ -134,6 +130,7 @@ def load_lang_assets(model_root: Path, lang: str):
     else:
         classes = CLASSES_FALLBACK
 
+    # model file candidates
     candidates = [
         lang_dir / f"{lang}_best.keras",
         lang_dir / f"{lang}_final.keras",
@@ -217,9 +214,9 @@ def save_uploaded_model_files(lang: str, files: Dict[str, Any], root: Path) -> s
         (lang_dir / "label_map.json").write_bytes(lmap.read()); saved.append("label_map.json")
     return "✅ Saved: " + ", ".join(saved) if saved else "⚠️ No files saved."
 
-# Readers
+# -------- Readers --------
 def read_pdf(file) -> List[str]:
-    if PdfReader is None: raise RuntimeError(f"pypdf not available: {PDF_IMPORT_ERROR}")
+    if PdfReader is None: raise RuntimeError("pypdf not installed.")
     texts = []
     reader = PdfReader(file)
     for pg in reader.pages:
@@ -228,7 +225,7 @@ def read_pdf(file) -> List[str]:
     return texts
 
 def read_docx(file) -> List[str]:
-    if Document is None: raise RuntimeError(f"python-docx not available: {DOCX_IMPORT_ERROR}")
+    if Document is None: raise RuntimeError("python-docx not installed.")
     texts = []
     doc = Document(file)
     for p in doc.paragraphs:
@@ -244,13 +241,14 @@ def read_csv(file) -> pd.DataFrame:
         except UnicodeDecodeError: continue
     return df if df is not None else pd.read_csv(file)
 
-# Sidebar
+# -------- Sidebar --------
 with st.sidebar:
     st.header("⚙️ Settings | الإعدادات")
     model_root = Path(st.text_input("Model directory | مسار الموديلات", value=str(DEFAULT_MODEL_DIR)))
-    st.caption("bilingual_sentiment_model/ar & /en each: model + tokenizer.json + label_map.json")
+    st.caption("Structure:\n"
+               "bilingual_sentiment_model/ar & /en each: (model .keras/.h5 or saved_model/) + tokenizer.json + label_map.json")
 
-# Tabs
+# -------- Tabs --------
 st.title("💬 Sentiment Analysis | تحليل المشاعر (AR/EN)")
 tabs = st.tabs([
     "📝 Single Text | نص واحد",
@@ -350,11 +348,8 @@ with tabs[3]:
     st.write("**Python:**", sys.version)
     st.write("**Working dir:**", os.getcwd())
 
-    # حالة المكتبات
     st.write("**pypdf available?**", PdfReader is not None)
-    if PdfReader is None: st.exception(PDF_IMPORT_ERROR)
     st.write("**python-docx available?**", Document is not None)
-    if Document is None: st.exception(DOCX_IMPORT_ERROR)
 
     ok_tf, err_tf = ensure_tf()
     st.write("**TensorFlow imported?**", ok_tf)
@@ -363,9 +358,8 @@ with tabs[3]:
         st.write("**Num GPUs:**", len(tf.config.list_physical_devices('GPU')))
     else:
         st.error("TensorFlow import error:")
-        st.exception(TF_IMPORT_ERROR)
+        st.exception(TF_ERR)
 
-    # وجود مجلدات النماذج
     st.write("**Model root:**", DEFAULT_MODEL_DIR.exists(), str(DEFAULT_MODEL_DIR.resolve()))
     for lang in ("ar","en"):
         d = DEFAULT_MODEL_DIR / lang
