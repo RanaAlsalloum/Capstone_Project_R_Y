@@ -1,4 +1,5 @@
-# app.py — Bilingual (Arabic + English) Sentiment | تحليل المشاعر
+# app.py — Bilingual (Arabic + English) Sentiment Analysis
+# --------------------------------------------------------
 # يدعم: نص واحد، CSV، PDF، DOCX + إدارة الموديلات + فحص البيئة
 
 import os, sys, re, io, zipfile, json
@@ -9,7 +10,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-# -------- Optional readers --------
+# PDF & DOCX readers
 try:
     from pypdf import PdfReader
 except Exception:
@@ -20,14 +21,15 @@ try:
 except Exception:
     Document = None
 
-# ===== Lazy-import TensorFlow (لتسريع تشغيل الصفحة) =====
+# ===== Lazy TensorFlow import =====
+TF_IMPORT_ERROR = None
 tf = None
 tokenizer_from_json = None
 pad_sequences = None
-TF_ERR = None
 
 def ensure_tf():
-    global tf, tokenizer_from_json, pad_sequences, TF_ERR
+    """Import TensorFlow only when needed."""
+    global tf, tokenizer_from_json, pad_sequences, TF_IMPORT_ERROR
     if tf is not None:
         return True, None
     try:
@@ -39,11 +41,11 @@ def ensure_tf():
         pad_sequences = _pad
         return True, None
     except Exception as e:
-        TF_ERR = e
+        TF_IMPORT_ERROR = e
         return False, str(e)
 
 # ------------------------
-# Page & Globals
+# Config
 # ------------------------
 st.set_page_config(page_title="💬 Sentiment | تحليل المشاعر", page_icon="💬", layout="wide")
 DEFAULT_MODEL_DIR = Path("bilingual_sentiment_model")
@@ -72,23 +74,28 @@ def preprocess_text(txt: str, lang: str) -> str:
     return ar_normalize(txt) if lang == "ar" else txt
 
 # ------------------------
-# Arabic keyword override (لتحسين العربي إذا أعطى Neutral)
+# Arabic keyword override
 # ------------------------
 AR_NEG = {
-    "حزين","زعلان","تعيس","سيئ","سيء","مكتئب","محبط","تعبان","كاره","مزعج","رديء","سئ",
-    "كارثي","مقرف","فظيع","سيئة","زفت","غثيث","مؤسف","مخيب","أسوأ","ما عجبني","ممل","سيئين","سيئه"
+    "حزين","زعلان","تعيس","سيئ","سيء","مكتئب","محبط","تعبان","كاره",
+    "مزعج","رديء","سئ","كارثي","مقرف","فظيع","سيئة","زفت","غثيث",
+    "مؤسف","مخيّب","أسوأ","ممل"
 }
 AR_POS = {
-    "سعيد","مبسوط","فرحان","ممتاز","رائع","جميل","حلو","احب","أحب","عجبني","مذهل",
-    "مسعد","هايل","كويس","ممتازه","تحفه","خيالي","يفوز","حبيت","أفضل","مرضي","مبهر","يجنن"
+    "سعيد","مبسوط","فرحان","ممتاز","رائع","جميل","حلو","احب","أحب",
+    "عجبني","مذهل","مسعد","هايل","كويس","ممتازه","تحفه","خيالي",
+    "يفوز","حبيت","أفضل","مرضي","مبهر"
 }
 
 def override_ar_prediction(text: str, label: str, probs: np.ndarray, classes: List[str], margin: float = 0.15) -> str:
-    if not {"neutral","negative","positive"}.issubset(set(classes)):
+    if "neutral" not in classes:
         return label
-    i_neu = classes.index("neutral")
-    i_neg = classes.index("negative")
-    i_pos = classes.index("positive")
+    try:
+        i_neu = classes.index("neutral")
+        i_neg = classes.index("negative")
+        i_pos = classes.index("positive")
+    except ValueError:
+        return label
     t = str(text)
     has_neg = any(w in t for w in AR_NEG)
     has_pos = any(w in t for w in AR_POS)
@@ -119,7 +126,7 @@ def load_lang_assets(model_root: Path, lang: str):
     with open(tok_path, "r", encoding="utf-8") as f:
         tok = tokenizer_from_json(f.read())
 
-    # labels
+    # label_map
     label_map_path = lang_dir / "label_map.json"
     if label_map_path.exists():
         try:
@@ -130,7 +137,7 @@ def load_lang_assets(model_root: Path, lang: str):
     else:
         classes = CLASSES_FALLBACK
 
-    # model file candidates
+    # model file
     candidates = [
         lang_dir / f"{lang}_best.keras",
         lang_dir / f"{lang}_final.keras",
@@ -140,10 +147,7 @@ def load_lang_assets(model_root: Path, lang: str):
     ]
     model_path = next((p for p in candidates if p.exists()), None)
     if model_path is None:
-        raise FileNotFoundError(
-            f"No model file found in {lang_dir}. "
-            f"Expected one of: {', '.join(p.name for p in candidates)}"
-        )
+        raise FileNotFoundError(f"No model file found in {lang_dir}")
 
     model = tf.keras.models.load_model(model_path)
     return tok, classes, model
@@ -188,35 +192,12 @@ def _predict_batch(texts: List[str], model_root: Path) -> pd.DataFrame:
             rows.append(row)
     return pd.DataFrame(rows)
 
-def save_uploaded_model_files(lang: str, files: Dict[str, Any], root: Path) -> str:
-    lang_dir = root / lang
-    lang_dir.mkdir(parents=True, exist_ok=True)
-
-    if files.get("zip"):
-        try:
-            with zipfile.ZipFile(files["zip"]) as z:
-                z.extractall(lang_dir)
-            return f"✅ Extracted into {lang_dir}"
-        except Exception as e:
-            return f"⚠️ ZIP extract failed: {e}"
-
-    saved = []
-    for key in ("model1", "model2"):
-        f = files.get(key)
-        if f and (f.name.endswith(".keras") or f.name.endswith(".h5")):
-            (lang_dir / f.name).write_bytes(f.read())
-            saved.append(f.name)
-    tok = files.get("tokenizer")
-    if tok:
-        (lang_dir / "tokenizer.json").write_bytes(tok.read()); saved.append("tokenizer.json")
-    lmap = files.get("label_map")
-    if lmap:
-        (lang_dir / "label_map.json").write_bytes(lmap.read()); saved.append("label_map.json")
-    return "✅ Saved: " + ", ".join(saved) if saved else "⚠️ No files saved."
-
-# -------- Readers --------
+# ------------------------
+# Readers
+# ------------------------
 def read_pdf(file) -> List[str]:
-    if PdfReader is None: raise RuntimeError("pypdf not installed.")
+    if PdfReader is None:
+        raise RuntimeError("pypdf not installed")
     texts = []
     reader = PdfReader(file)
     for pg in reader.pages:
@@ -225,7 +206,8 @@ def read_pdf(file) -> List[str]:
     return texts
 
 def read_docx(file) -> List[str]:
-    if Document is None: raise RuntimeError("python-docx not installed.")
+    if Document is None:
+        raise RuntimeError("python-docx not installed")
     texts = []
     doc = Document(file)
     for p in doc.paragraphs:
@@ -238,17 +220,21 @@ def read_csv(file) -> pd.DataFrame:
     for enc in ("utf-8","utf-8-sig","latin-1","cp1256"):
         try:
             file.seek(0); df = pd.read_csv(file, encoding=enc); break
-        except UnicodeDecodeError: continue
+        except UnicodeDecodeError:
+            continue
     return df if df is not None else pd.read_csv(file)
 
-# -------- Sidebar --------
+# ------------------------
+# Sidebar
+# ------------------------
 with st.sidebar:
     st.header("⚙️ Settings | الإعدادات")
     model_root = Path(st.text_input("Model directory | مسار الموديلات", value=str(DEFAULT_MODEL_DIR)))
-    st.caption("Structure:\n"
-               "bilingual_sentiment_model/ar & /en each: (model .keras/.h5 or saved_model/) + tokenizer.json + label_map.json")
+    st.caption("bilingual_sentiment_model/ar & /en each: model + tokenizer.json + label_map.json")
 
-# -------- Tabs --------
+# ------------------------
+# Tabs
+# ------------------------
 st.title("💬 Sentiment Analysis | تحليل المشاعر (AR/EN)")
 tabs = st.tabs([
     "📝 Single Text | نص واحد",
@@ -257,115 +243,70 @@ tabs = st.tabs([
     "🩺 Environment | البيئة"
 ])
 
-# Tab 1
+# ------------------------
+# Tab 1 - Single text
+# ------------------------
 with tabs[0]:
     ok_tf, err_tf = ensure_tf()
     if not ok_tf:
-        st.error("TensorFlow is not available. افتحي تبويب **Environment** لمشاهدة الخطأ.")
+        st.error("TensorFlow غير متاح. افتحي تبويب Environment لمشاهدة السبب.")
     else:
-        st.subheader("Single Text Prediction | التنبؤ لنص واحد")
-        t = st.text_area("Enter text (Arabic or English) | أدخل نص:", height=140,
+        t = st.text_area("Enter text (Arabic or English):", height=140,
                          placeholder="مثال: انا سعيد اليوم / I love this product")
-        if st.button("Predict | تنبؤ", type="primary"):
+        if st.button("Predict"):
             if t.strip():
                 try:
                     df = _predict_batch([t], model_root)
-                    if df.empty:
-                        st.warning("No output. Check models/files.")
-                    else:
-                        row = df.iloc[0]
-                        lang_badge = "🇸🇦 Arabic | عربي" if row["lang"] == "ar" else "🇬🇧 English | إنجليزي"
-                        st.success(f"**Language | اللغة:** {lang_badge}\n\n"
-                                   f"**Prediction | النتيجة:** `{row['label']}`  |  **Confidence | الثقة:** `{row['confidence']:.3f}`")
-                        prob_cols = [c for c in df.columns if c.startswith("p_")]
-                        if prob_cols:
-                            st.markdown("**Probabilities | الاحتمالات:**")
-                            st.dataframe(df[prob_cols].T.rename(columns={0: "probability"}), use_container_width=True)
-            else:
-                st.warning("Please enter some text | الرجاء إدخال نص.")
+                    row = df.iloc[0]
+                    lang_badge = "🇸🇦 عربي" if row["lang"] == "ar" else "🇬🇧 English"
+                    st.success(f"**Language:** {lang_badge}\n\n**Prediction:** {row['label']}  |  **Confidence:** {row['confidence']:.3f}")
+                    prob_cols = [c for c in df.columns if c.startswith("p_")]
+                    if prob_cols:
+                        st.dataframe(df[prob_cols].T.rename(columns={0: "probability"}))
+                except Exception as e:
+                    st.error(e)
 
-# Tab 2
+# ------------------------
+# Tab 2 - File upload
+# ------------------------
 with tabs[1]:
     ok_tf, err_tf = ensure_tf()
     if not ok_tf:
-        st.error("TensorFlow is not available. افتحي تبويب **Environment** لمشاهدة الخطأ.")
+        st.error("TensorFlow غير متاح.")
     else:
-        st.subheader("Batch Prediction from file | التنبؤ من ملف")
         up = st.file_uploader("Upload CSV / PDF / DOCX", type=["csv","pdf","docx"])
-        run = st.button("Run | تشغيل", type="primary")
-        if up and run:
+        if st.button("Run") and up:
             try:
-                if up.name.lower().endswith(".csv"):
+                if up.name.endswith(".csv"):
                     df = read_csv(up)
                     if "text" not in df.columns:
                         df = df.rename(columns={df.columns[0]: "text"})
                     texts = df["text"].astype(str).tolist()
-                elif up.name.lower().endswith(".pdf"):
+                elif up.name.endswith(".pdf"):
                     texts = read_pdf(up)
                 else:
                     texts = read_docx(up)
-                if not texts:
-                    st.warning("No text found | لم يتم العثور على نصوص.")
-                else:
-                    out_df = _predict_batch(texts, model_root)
-                    if up.name.lower().endswith(".csv"):
-                        res = pd.concat([df.reset_index(drop=True), out_df.drop(columns=["text"]).reset_index(drop=True)], axis=1)
-                    else:
-                        res = out_df
-                    st.success(f"Predicted {len(res)} rows | تم التنبؤ لعدد {len(res)} صفوف")
-                    st.dataframe(res, use_container_width=True)
-                    st.download_button("Download results CSV | تحميل النتائج",
-                                       data=res.to_csv(index=False).encode("utf-8"),
-                                       file_name="predictions.csv", mime="text/csv")
+
+                out_df = _predict_batch(texts, model_root)
+                st.dataframe(out_df)
+                st.download_button("Download CSV", data=out_df.to_csv(index=False), file_name="predictions.csv")
             except Exception as e:
-                st.error("Error | خطأ:"); st.exception(e)
+                st.error(e)
 
-# Tab 3
+# ------------------------
+# Tab 3 - Model Manager
+# ------------------------
 with tabs[2]:
-    st.subheader("Model Manager | إدارة النماذج")
-    st.caption("Upload model (.keras/.h5), tokenizer.json, label_map.json for AR & EN.")
-    c1, c2 = st.columns(2)
-    for col, lang in zip((c1,c2), ("ar","en")):
-        with col:
-            st.markdown(f"### {'Arabic 🇸🇦 | العربية' if lang=='ar' else 'English 🇬🇧 | الإنجليزية'}")
-            up_zip = st.file_uploader(f"[{lang}] ZIP (optional)", type=["zip"], key=f"{lang}_zip")
-            up_m1  = st.file_uploader(f"[{lang}] Model 1 (.keras/.h5)", type=["keras","h5"], key=f"{lang}_m1")
-            up_m2  = st.file_uploader(f"[{lang}] Model 2 (.keras/.h5)", type=["keras","h5"], key=f"{lang}_m2")
-            up_tok = st.file_uploader(f"[{lang}] tokenizer.json", type=["json"], key=f"{lang}_tok")
-            up_map = st.file_uploader(f"[{lang}] label_map.json", type=["json"], key=f"{lang}_map")
-            if st.button(f"Save {lang.upper()} | حفظ {lang.upper()}", key=f"save_{lang}"):
-                msg = save_uploaded_model_files(lang, {"zip":up_zip,"model1":up_m1,"model2":up_m2,"tokenizer":up_tok,"label_map":up_map}, model_root)
-                st.info(msg)
+    st.info("ارفع ملفات الموديل (.keras/.h5) + tokenizer.json + label_map.json لكل لغة (ar/en).")
 
-    st.code("""bilingual_sentiment_model/
-  ├─ ar/ (ar_best.keras | ar_best.h5 | saved_model/) + tokenizer.json + label_map.json
-  └─ en/ (en_best.keras | en_best.h5 | saved_model/) + tokenizer.json + label_map.json
-""")
-
-# Tab 4
+# ------------------------
+# Tab 4 - Environment
+# ------------------------
 with tabs[3]:
-    st.subheader("Environment check | فحص البيئة")
     st.write("**Python:**", sys.version)
-    st.write("**Working dir:**", os.getcwd())
-
-    st.write("**pypdf available?**", PdfReader is not None)
-    st.write("**python-docx available?**", Document is not None)
-
     ok_tf, err_tf = ensure_tf()
     st.write("**TensorFlow imported?**", ok_tf)
     if ok_tf:
-        st.write("**TF version:**", tf.__version__)
-        st.write("**Num GPUs:**", len(tf.config.list_physical_devices('GPU')))
+        st.write("TF version:", tf.__version__)
     else:
-        st.error("TensorFlow import error:")
-        st.exception(TF_ERR)
-
-    st.write("**Model root:**", DEFAULT_MODEL_DIR.exists(), str(DEFAULT_MODEL_DIR.resolve()))
-    for lang in ("ar","en"):
-        d = DEFAULT_MODEL_DIR / lang
-        st.write(f"**{lang} dir exists?**", d.exists(), str(d))
-        if d.exists():
-            try:
-                st.code("\n".join([p.name for p in sorted(d.iterdir())]), language="bash")
-            except:
-                pass
+        st.error(err_tf)
