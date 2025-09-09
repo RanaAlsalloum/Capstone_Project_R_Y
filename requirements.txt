@@ -4,9 +4,11 @@ wheel>=0.43
 
 streamlit==1.38.0
 
+# TF 2.20 يعمل على بايثون 3.11 ويحتاج protobuf>=5 و numpy<2
 tensorflow==2.20.0
 numpy==1.26.4
 pandas==2.2.2
+protobuf>=5.26.1
 
-pypdf==4.2.0
-python-docx==1.1.0
+pypdf>=4.2.0
+python-docx>=1.1.0
