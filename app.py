@@ -49,6 +49,7 @@ def ensure_tf():
 # Config
 # ------------------------
 st.set_page_config(page_title="💬 Sentiment | تحليل المشاعر", page_icon="💬", layout="wide")
+st.caption("By: Rana Alsalloum, Yaqeen Adnan, Reem Al-Rshedi")
 DEFAULT_MODEL_DIR = Path("bilingual_sentiment_model")
 MAX_LEN = 96
 CLASSES_FALLBACK = ["negative", "neutral", "positive"]
