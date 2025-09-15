@@ -78,7 +78,12 @@ def preprocess_text(txt: str, lang: str) -> str:
 # ------------------------
 # Arabic rules/keywords to break neutrality
 # ------------------------
-AR_NEG = {
+# ------------------------
+# Arabic rules/keywords to break neutrality  (STRONGER VERSION)
+# ------------------------
+
+# نستخدم قوائم "خام" ثم نطبّعها ar_normalize عشان نمسك كل أشكال الهمزات/التنوين/التاء المربوطة
+AR_NEG_RAW = {
     "حزين","زعلان","تعيس","سيئ","سيء","سئ","مكتئب","محبط","تعبان","كاره",
     "مزعج","رديء","سيئة","كارثي","مقرف","فظيع","زفت","مخيّب","أسوأ","ممل",
     "كارثة","رداءة","غبن","قرف","ندمت","تافه","سيئين","بائس","يائس","منهك",
@@ -87,10 +92,13 @@ AR_NEG = {
     # سلبية مرّة (أقوى)
     "كارثي جدًا","مأساوي","فظيع جدًا","مقزز","مروع","كريه","بغيض",
     "مصيبة","فضيحة","مذل","مهين","مقرف جدًا","خيبة أمل","انكسار",
-    "منهار","يائس جدًا","كارثة كبرى","أسوأ شيء","قمة السوء"
+    "منهار","يائس جدًا","كارثة كبرى","أسوأ شيء","قمة السوء",
+    # إضافات سلبية قويّة جدًا
+    "كارثة لا تحتمل","كارثة لا تُحتمل","مأساة كبيرة","أمر فاضح","قمة الفشل","فشل ذريع",
+    "مخيف جدًا","رهيب جدًا","بشع","قاسٍ جدًا","عار","مأزوم","محبط جدًا","مزري جدًا"
 }
 
-AR_POS = {
+AR_POS_RAW = {
     "سعيد","مبسوط","فرحان","ممتاز","رائع","جميل","حلو","احب","أحب",
     "عجبني","مذهل","مسعد","هايل","كويس","ممتازه","تحفه","خيالي",
     "يفوز","حبيت","أفضل","مرضي","مبهر","روعة","يجنن","رهيب","مره حلو","فخم",
@@ -102,12 +110,15 @@ AR_POS = {
     "امتنان","ممتن جدًا","قمة السعادة","نجاح باهر","فائز","منتصر",
     "مبتهج للغاية","مبهج للغاية","رائع جدًا","جميل جدًا","سعيد جدًا",
     "طمأنينة","راحة","أمان","القادم أجمل","طاقة إيجابية","أحلامي تتحقق",
-    "إلهام","فرحة كبيرة","إنجاز عظيم","إنجازات","لحظات جميلة"
+    "إلهام","فرحة كبيرة","إنجاز عظيم","إنجازات","لحظات جميلة",
+    # إضافات إيجابية قويّة جدًا
+    "ممتاز جدًا","روعة جدًا","مبهر جدًا","إنجاز ضخم","فخر كبير","فخور جدًا",
+    "قمة الروعة","سعادة غامرة","تفوق كبير","مُلهم جدًا","مطمئن جدًا","سلام داخلي"
 }
 
-AR_NEGATIONS = {"مو","مش","ليس","ما","مو مره","مهو","مهوب","ولا","ابداً","أبدًا"}
+AR_NEGATIONS_RAW = {"مو","مش","ليس","ما","مو مره","مهو","مهوب","ولا","ابداً","أبدًا"}
 
-AR_INTENSIFIERS = {
+AR_INTENSIFIERS_RAW = {
     "جداً","جدًا","مره","مرة","بشكل كبير","مرة كثير","قوي","للغاية","تمامًا",
     "بشدة","أوي","كتير","وايد","إلى حد بعيد","حقًا","بجد","مرة مره"
 }
@@ -116,17 +127,35 @@ EMOJI_POS = {
     "😊","😍","🤩","😁","👍","💖","✨","👏","🥰","🌸","🌟","💐","🌷",
     "😎","🥳","🙌","💯","🔥","🌈","🤗","🎉","😇","💎"
 }
-
 EMOJI_NEG = {
     "😞","😡","🤬","😢","👎","💔","😠","😭","😓","😔","☹️","🙁","🥀",
     "🤕","🤢","😫","😩","😖","😣","😤"
 }
 
-EXCLAMATION_BOOST = 0.06
-INTENSIFIER_BOOST = 0.07
-RULE_CONF = 0.55
-LOW_CONF = 0.60
-NEU_MARGIN = 0.18
+# قوائم مطبّعة (حتى تمسك "ايجابيه/إيجابية/ايجابية..." إلخ)
+AR_NEG = {ar_normalize(w) for w in AR_NEG_RAW}
+AR_POS = {ar_normalize(w) for w in AR_POS_RAW}
+AR_NEGATIONS = {ar_normalize(w) for w in AR_NEGATIONS_RAW}
+AR_INTENSIFIERS = {ar_normalize(w) for w in AR_INTENSIFIERS_RAW}
+
+# عبارات قويّة جدًا: ظهورها يقلب النتيجة مباشرة غالبًا
+STRONG_POS = {ar_normalize(w) for w in {
+    "امتنان","ممتن جدًا","طاقة إيجابية","القادم أجمل","سعيد جدًا","رائع جدًا",
+    "نجاح باهر","إنجاز عظيم","إنجازات","لحظات جميلة","أحلامي تتحقق",
+    "مطمئن","طمأنينة","راحة","أمان","مبتهج للغاية","مبهج للغاية","فرحة كبيرة",
+    "إلهام","مُلهم","فخور جدًا","متفائل جدًا","قمة السعادة","سلام داخلي"
+}}
+STRONG_NEG = {ar_normalize(w) for w in {
+    "كارثة كبرى","أسوأ شيء","مروع جدًا","مقزز جدًا","فضيحة","مذل","مهين",
+    "كارثي جدًا","يائس جدًا","مصيبة كبيرة","قمة السوء","كارثة لا تُحتمل","فشل ذريع"
+}}
+
+# باراميترات أقوى لتدخل القواعد
+EXCLAMATION_BOOST = 0.10
+INTENSIFIER_BOOST = 0.12
+RULE_CONF = 0.75
+LOW_CONF = 0.90      # القاعدة تتدخل حتى لو ثقة النموذج 0.89
+NEU_MARGIN = 0.35    # نفك الحياد أسرع باتجاه الأقرب
 
 def _rule_score_ar(text: str) -> str | None:
     """قواعد سريعة: تُرجِع 'positive' أو 'negative' أو None."""
@@ -134,7 +163,7 @@ def _rule_score_ar(text: str) -> str | None:
     has_pos = any(w in t for w in AR_POS) or any(e in text for e in EMOJI_POS)
     has_neg = any(w in t for w in AR_NEG) or any(e in text for e in EMOJI_NEG)
 
-    # نفي بسيط: "مو حلو" = سلبي ، "مو سيء" = إيجابي تقريباً
+    # نفي بسيط: "مو حلو" = سلبي ، "مو سيء" = أقرب لإيجابي
     negation = any(n in t for n in AR_NEGATIONS)
     if negation:
         if has_pos and not has_neg:
@@ -155,7 +184,8 @@ def override_ar_prediction(
     classes: List[str],
     margin: float = NEU_MARGIN
 ) -> tuple[str, float]:
-    """يُرجع (label, confidence) بعد القواعد والتحسينات العربية."""
+    """نسخة مُقوّاة: تسمح بقلب التنبؤ عند وجود مؤشرات عربية قويّة حتى لو ثقة الموديل مرتفعة نسبيًا."""
+    # فهارس الفئات
     try:
         i_neg = classes.index("negative")
         i_neu = classes.index("neutral")
@@ -164,32 +194,61 @@ def override_ar_prediction(
         return label, float(np.max(probs))
 
     p_neg, p_neu, p_pos = float(probs[i_neg]), float(probs[i_neu]), float(probs[i_pos])
+    top_p = max(p_neg, p_neu, p_pos)
 
-    # لو محايد وبالقرب من أحد الطرفين، نفك الحياد
+    t = ar_normalize(text)
+
+    # إشارات عامة وقويّة
+    has_pos = any(w in t for w in AR_POS) or any(e in text for e in EMOJI_POS)
+    has_neg = any(w in t for w in AR_NEG) or any(e in text for e in EMOJI_NEG)
+    has_strong_pos = any(w in t for w in STRONG_POS)
+    has_strong_neg = any(w in t for w in STRONG_NEG)
+
+    # نفي
+    negation = any(n in t for n in AR_NEGATIONS)
+    if negation:
+        if has_pos and not has_neg:
+            has_pos, has_neg = False, True
+        elif has_neg and not has_pos:
+            has_pos, has_neg = True, False
+
+    # (0) قلب مباشر لو فيه إشارة قويّة جدًا واضحة غير متعارضة
+    if has_strong_pos and not has_strong_neg:
+        return "positive", max(top_p, 0.85)
+    if has_strong_neg and not has_strong_pos:
+        return "negative", max(top_p, 0.85)
+
+    # (1) لو محايد وقريب من طرف -> فك الحياد
+    new_label = label
     if label == "neutral":
         if p_neu - p_neg <= margin:
-            label = "negative"
+            new_label = "negative"
         if p_neu - p_pos <= margin:
-            label = "positive"
+            new_label = "positive"
 
-    # قواعد لغوية/إيموجي إذا الثقة ضعيفة أو ما زال محايد
-    top_p = max(p_neg, p_neu, p_pos)
-    rule = _rule_score_ar(text)
-    if rule and (label == "neutral" or top_p < LOW_CONF):
-        label = rule
-        top_p = max(top_p, RULE_CONF)
+    # (2) لو ثقة الموديل أقل من LOW_CONF -> اسمح بالانقلاب حسب القاعدة
+    if top_p < LOW_CONF:
+        if has_pos and not has_neg:
+            new_label = "positive"
+            top_p = max(top_p, RULE_CONF)
+        elif has_neg and not has_pos:
+            new_label = "negative"
+            top_p = max(top_p, RULE_CONF)
 
-    # تعزيز حسب علامات التعجب والمكثِّفات
+    # (3) تعزيزات التعجب/المكثّفات
     boost = 0.0
     excl = text.count("!")
-    if excl >= 2: boost += EXCLAMATION_BOOST
-    if any(w in text for w in AR_INTENSIFIERS): boost += INTENSIFIER_BOOST
-    if label == "positive" and boost > 0:
-        top_p = min(0.99, top_p + boost)
-    if label == "negative" and boost > 0 and excl >= 3:
-        top_p = min(0.99, top_p + boost/2)
+    if excl >= 2: 
+        boost += EXCLAMATION_BOOST
+    if any(w in t for w in AR_INTENSIFIERS):
+        boost += INTENSIFIER_BOOST
 
-    return label, top_p
+    if new_label == "positive" and boost > 0:
+        top_p = min(0.99, max(top_p, RULE_CONF) + boost)
+    elif new_label == "negative" and boost > 0 and excl >= 3:
+        top_p = min(0.99, max(top_p, RULE_CONF) + boost/2)
+
+    return new_label, top_p
 
 # ------------------------
 # Loaders
