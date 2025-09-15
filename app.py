@@ -122,11 +122,11 @@ EMOJI_NEG = {
     "🤕","🤢","😫","😩","😖","😣","😤"
 }
 
-EXCLAMATION_BOOST = 0.10   # أقوى لو في تعجب
-INTENSIFIER_BOOST = 0.12   # أقوى لو في "جداً/مره"
-RULE_CONF = 0.75           # ثقة افتراضية أعلى إذا قلبنا بالقاعدة
-LOW_CONF = 0.85            # القاعدة تتدخل حتى لو الموديل واثق أقل من 85%
-NEU_MARGIN = 0.35          # المحايد يُكسر بسهولة أكبر
+EXCLAMATION_BOOST = 0.06
+INTENSIFIER_BOOST = 0.07
+RULE_CONF = 0.55
+LOW_CONF = 0.60
+NEU_MARGIN = 0.18
 
 def _rule_score_ar(text: str) -> str | None:
     """قواعد سريعة: تُرجِع 'positive' أو 'negative' أو None."""
