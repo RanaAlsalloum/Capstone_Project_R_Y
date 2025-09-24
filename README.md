@@ -9,7 +9,7 @@ It supports both **single text prediction** and **batch prediction** from files 
 The app also includes an **Environment Check** tab to help debug dependencies.  
 
 🔗 **Live Demo on Streamlit Cloud:**  
-👉 [Open the App](https://capstoneprojectry-dstete5v7yfp2crbgrlblf.streamlit.app/)
+👉 [https://capstoneprojectry-dstete5v7yfp2crbgrlblf.streamlit.app)
 
 ---
 
